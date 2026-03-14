@@ -1,0 +1,142 @@
+# monitoring/alerting/dgx-alerts.yml
+# PrometheusRule CRD for DGX cluster alerting
+# Apply: kubectl apply -f dgx-alerts.yml
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: dgx-cluster-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: monitoring
+spec:
+  groups:
+
+    # ──────────────────────────────────────
+    - name: dgx.gpu.critical
+      rules:
+
+        - alert: GPUXIDError
+          expr: increase(DCGM_FI_DEV_XID_ERRORS[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU XID error on {{ $labels.instance }}"
+            description: "XID error detected on GPU {{ $labels.gpu }} — possible hardware fault. Check: nvidia-smi dmon -s e"
+
+        - alert: GPUUncorrectedECCError
+          expr: DCGM_FI_DEV_ECC_DBE_VOL_TOTAL > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Uncorrected ECC error on {{ $labels.instance }}"
+            description: "GPU {{ $labels.gpu }} has uncorrected double-bit ECC error — hardware replacement may be needed"
+
+        - alert: FabricManagerDown
+          expr: up{job="dcgm-exporter"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "DCGM exporter down on {{ $labels.instance }}"
+            description: "nvidia-fabricmanager or DCGM may be down — NVSwitch health unknown"
+
+    # ──────────────────────────────────────
+    - name: dgx.gpu.warning
+      rules:
+
+        - alert: GPUHighTemperature
+          expr: DCGM_FI_DEV_GPU_TEMP > 83
+          for: 3m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU high temperature on {{ $labels.instance }}"
+            description: "GPU {{ $labels.gpu }} at {{ $value }}°C — check cooling (threshold: 83°C)"
+
+        - alert: GPUPowerOverTDP
+          expr: DCGM_FI_DEV_POWER_USAGE > 750
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU power over TDP on {{ $labels.instance }}"
+            description: "GPU {{ $labels.gpu }} drawing {{ $value | printf \"%.0f\" }}W — H100 TDP is 700W"
+
+        - alert: GPUMemoryAlmostFull
+          expr: (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL) * 100 > 95
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU memory near capacity on {{ $labels.instance }}"
+            description: "GPU {{ $labels.gpu }} HBM {{ $value | printf \"%.1f\" }}% full — OOM risk for new jobs"
+
+        - alert: GPUNVLinkError
+          expr: increase(DCGM_FI_DEV_NVLINK_RECOVERY_ERR[10m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NVLink error on {{ $labels.instance }}"
+            description: "NVLink recovery error on GPU {{ $labels.gpu }} — intra-node BW may be degraded"
+
+    # ──────────────────────────────────────
+    - name: dgx.gpu.info
+      rules:
+
+        - alert: GPULongTermIdle
+          expr: avg_over_time(DCGM_FI_DEV_GPU_UTIL[1h]) < 5
+          for: 1h
+          labels:
+            severity: info
+          annotations:
+            summary: "GPU idle for 1+ hour on {{ $labels.instance }}"
+            description: "GPU {{ $labels.gpu }} average utilization {{ $value | printf \"%.1f\" }}% — check job queue"
+
+    # ──────────────────────────────────────
+    - name: dgx.node
+      rules:
+
+        - alert: NodeHighMemoryUsage
+          expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High system memory usage on {{ $labels.instance }}"
+            description: "Node memory {{ $value | printf \"%.1f\" }}% used — may impact GPU workloads"
+
+        - alert: NodeDiskSpaceLow
+          expr: (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Low disk space on {{ $labels.instance }}"
+            description: "Root filesystem {{ $value | printf \"%.1f\" }}% full — clean up /var/log or checkpoints"
+
+    # ──────────────────────────────────────
+    - name: dgx.infiniband
+      rules:
+
+        - alert: IBHighSymbolErrors
+          expr: increase(infiniband_port_data_symbols_error_total[5m]) > 500
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High IB symbol errors on {{ $labels.instance }}"
+            description: "Port {{ $labels.port }} has {{ $value }} symbol errors in 5m — check cable or transceiver"
+
+        - alert: IBPortDown
+          expr: infiniband_port_state != 4   # 4 = Active
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "IB port down on {{ $labels.instance }}"
+            description: "Port {{ $labels.port }} state = {{ $value }} (expected 4=Active) — fabric path lost"

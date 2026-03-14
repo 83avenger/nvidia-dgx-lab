@@ -1,0 +1,22 @@
+# Reports (generated)
+reports/
+
+# Ansible
+*.retry
+.ansible/
+
+# Secrets
+*.key
+*.pem
+secrets/
+vault/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Temp
+*.tmp
+*.log
+/tmp/

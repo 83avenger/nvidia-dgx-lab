@@ -1,0 +1,130 @@
+# configs/mig/gpu-operator-mig-config.yaml
+# NVIDIA GPU Operator MIG configuration for Kubernetes
+# Deploy with: kubectl apply -f gpu-operator-mig-config.yaml
+#
+# Prerequisites:
+#   helm install gpu-operator nvidia/gpu-operator \
+#     --set mig.strategy=mixed \
+#     --namespace gpu-operator
+
+---
+# MIG partitioning ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mig-parted-config
+  namespace: gpu-operator
+data:
+  config.yaml: |
+    version: v1
+    mig-configs:
+
+      # All GPUs: 7 small slices (max tenant density)
+      all-1g.10gb:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            1g.10gb: 7
+
+      # All GPUs: 2 medium slices each
+      all-3g.20gb:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            3g.20gb: 2
+
+      # All GPUs: full GPU (training mode)
+      all-7g.80gb:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            7g.80gb: 1
+
+      # Mixed: GPUs 0-3 for inference (small), GPUs 4-7 for training (large)
+      mixed-inference-training:
+        - devices: [0, 1, 2, 3]
+          mig-enabled: true
+          mig-devices:
+            1g.10gb: 7
+        - devices: [4, 5, 6, 7]
+          mig-enabled: true
+          mig-devices:
+            3g.20gb: 2
+
+      # Disable MIG (full GPU mode for large training)
+      all-disabled:
+        - devices: all
+          mig-enabled: false
+
+---
+# Node label to select MIG profile
+# Apply to a DGX node: kubectl label node dgx-h100-01 nvidia.com/mig.config=all-1g.10gb
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mig-manager
+  namespace: gpu-operator
+  labels:
+    app: mig-manager
+spec:
+  selector:
+    matchLabels:
+      app: mig-manager
+  template:
+    metadata:
+      labels:
+        app: mig-manager
+    spec:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: mig-manager
+          image: nvcr.io/nvidia/cloud-native/k8s-mig-manager:v0.5.5-ubuntu20.04
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CONFIG_FILE
+              value: /mig-parted-config/config.yaml
+          volumeMounts:
+            - name: mig-parted-config
+              mountPath: /mig-parted-config
+            - name: host-root
+              mountPath: /host
+              readOnly: true
+          securityContext:
+            privileged: true
+      volumes:
+        - name: mig-parted-config
+          configMap:
+            name: mig-parted-config
+        - name: host-root
+          hostPath:
+            path: /
+
+---
+# Example: Run inference job on 1g.10gb MIG slice
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inference-mig-demo
+  namespace: default
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: inference
+          image: nvcr.io/nvidia/cuda:12.3.1-runtime-ubuntu22.04
+          command: ["nvidia-smi", "-L"]
+          resources:
+            limits:
+              nvidia.com/mig-1g.10gb: 1    # Request exactly 1 MIG slice
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists

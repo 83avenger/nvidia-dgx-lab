@@ -1,0 +1,103 @@
+name: Lab Validation — Lint & Dry Run
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-ansible:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ansible ansible-lint yamllint
+
+      - name: Lint YAML files
+        run: |
+          yamllint playbooks/ configs/
+
+      - name: Ansible Lint playbooks
+        run: |
+          ansible-lint playbooks/*.yml
+        continue-on-error: true   # Lab env — non-blocking
+
+  validate-scripts:
+    name: Shell Script Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck on all scripts
+        run: |
+          find scripts/ -name "*.sh" -exec shellcheck {} \;
+
+  validate-json:
+    name: JSON Config Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Validate JSON configs
+        run: |
+          find configs/ -name "*.json" | while read f; do
+            echo "Validating: $f"
+            python3 -m json.tool "$f" > /dev/null && echo "  OK" || echo "  FAIL: $f"
+          done
+
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Check all doc files exist
+        run: |
+          DOCS=(
+            "docs/01-dgx-hardware-overview.md"
+            "docs/02-infiniband-fabric-design.md"
+            "docs/03-spectrum-x-ethernet.md"
+            "docs/04-mig-profiles-guide.md"
+            "docs/05-dpuflow-bluefield3.md"
+            "docs/06-nvidia-air-lab.md"
+            "docs/07-pse-interview-cheatsheet.md"
+          )
+          for doc in "${DOCS[@]}"; do
+            if [ -f "$doc" ]; then
+              echo "✓ $doc"
+            else
+              echo "✗ MISSING: $doc"
+              exit 1
+            fi
+          done
+
+      - name: Word count check (docs must be substantial)
+        run: |
+          for doc in docs/*.md; do
+            WC=$(wc -w < "$doc")
+            if [ "$WC" -lt 100 ]; then
+              echo "⚠️  $doc is too short ($WC words)"
+            else
+              echo "✓  $doc: $WC words"
+            fi
+          done

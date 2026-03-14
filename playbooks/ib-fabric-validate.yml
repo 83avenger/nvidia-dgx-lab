@@ -1,0 +1,89 @@
+---
+# playbooks/ib-fabric-validate.yml
+# InfiniBand fabric health validation
+# Usage: ansible-playbook ib-fabric-validate.yml -i configs/air/inventory.ini
+
+- name: InfiniBand Fabric Validation
+  hosts: management
+  become: true
+  gather_facts: false
+
+  vars:
+    ib_expected_nodes: 8
+    ib_expected_switches: 3
+    error_threshold: 100
+
+  tasks:
+    - name: Run ibnetdiscover to map fabric
+      command: ibnetdiscover
+      register: fabric_map
+
+    - name: Count compute nodes in fabric
+      set_fact:
+        discovered_nodes: "{{ fabric_map.stdout | regex_findall('Ca') | length }}"
+
+    - name: Count switches in fabric
+      set_fact:
+        discovered_switches: "{{ fabric_map.stdout | regex_findall('Switch') | length }}"
+
+    - name: Assert expected node count
+      assert:
+        that: "discovered_nodes | int >= ib_expected_nodes | int"
+        fail_msg: "Expected {{ ib_expected_nodes }} nodes, found {{ discovered_nodes }}"
+        success_msg: "✓ Node count OK: {{ discovered_nodes }} nodes discovered"
+
+    - name: Run perfquery error check on all ports
+      command: perfquery -x -a
+      register: port_errors
+
+    - name: Parse symbol errors
+      set_fact:
+        symbol_errors: "{{ port_errors.stdout | regex_findall('SymbolErrors:(\\d+)') | map('int') | sum }}"
+
+    - name: Warn if symbol errors exceed threshold
+      debug:
+        msg: "⚠️  Symbol errors: {{ symbol_errors }} (threshold: {{ error_threshold }})"
+      when: symbol_errors | int > error_threshold | int
+
+    - name: Confirm low error rate
+      debug:
+        msg: "✓ Symbol errors within threshold: {{ symbol_errors }}"
+      when: symbol_errors | int <= error_threshold | int
+
+    - name: Check Subnet Manager status
+      command: sminfo
+      register: sm_info
+
+    - name: Display SM info
+      debug:
+        msg: "{{ sm_info.stdout }}"
+
+    - name: Run ibping latency check (loopback)
+      command: ibping -G {{ ansible_host }} -c 10
+      register: ibping_result
+      ignore_errors: yes
+
+    - name: Display IB ping results
+      debug:
+        msg: "{{ ibping_result.stdout_lines }}"
+
+    - name: Generate validation report
+      copy:
+        content: |
+          ===========================================
+          NVIDIA DGX Cluster - IB Fabric Health Report
+          Date: {{ ansible_date_time.date }}
+          ===========================================
+          Nodes Discovered: {{ discovered_nodes }}
+          Switches Discovered: {{ discovered_switches }}
+          Total Symbol Errors: {{ symbol_errors }}
+          SM Status: {{ sm_info.stdout | truncate(100) }}
+          ===========================================
+          Status: {{ 'PASS' if (symbol_errors | int <= error_threshold | int) else 'WARN - Check Errors' }}
+        dest: /tmp/ib-fabric-report-{{ ansible_date_time.date }}.txt
+
+    - name: Fetch report to local
+      fetch:
+        src: "/tmp/ib-fabric-report-{{ ansible_date_time.date }}.txt"
+        dest: "./reports/"
+        flat: yes

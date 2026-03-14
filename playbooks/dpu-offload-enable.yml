@@ -1,0 +1,152 @@
+---
+# playbooks/dpu-offload-enable.yml
+# Enable BlueField-3 DPU OVS Hardware Offload on DGX nodes
+# Usage: ansible-playbook dpu-offload-enable.yml -i configs/air/inventory.ini
+
+- name: Enable BlueField-3 DPU OVS Hardware Offload
+  hosts: dgx_nodes
+  become: true
+  serial: 1
+
+  vars:
+    ovs_bridge_name: "br-offload"
+    uplink_port: "p0"                  # BF3 physical uplink
+    host_pf_rep: "pf0hpf"             # Host PF representor
+    vf_reps: ["pf0vf0", "pf0vf1"]    # VF representors to add
+    pfc_priority: 3
+    roce_dscp: 26
+    mtu_size: 4200
+
+  tasks:
+    - name: Detect BlueField-3 DPU via PCI
+      shell: lspci | grep -i "BlueField\|MT42" | head -1
+      register: bf3_detect
+      ignore_errors: yes
+
+    - name: Fail if BF3 not found
+      fail:
+        msg: "BlueField-3 DPU not detected on {{ inventory_hostname }}. Check PCIe seating."
+      when: bf3_detect.stdout == ""
+
+    - name: Display detected DPU
+      debug:
+        msg: "BF3 detected: {{ bf3_detect.stdout }}"
+
+    - name: Install required packages
+      apt:
+        name:
+          - openvswitch-switch
+          - openvswitch-common
+          - rdma-core
+          - ibverbs-utils
+        state: present
+        update_cache: yes
+
+    - name: Load mlx5 and RDMA kernel modules
+      modprobe:
+        name: "{{ item }}"
+      loop:
+        - mlx5_core
+        - mlx5_ib
+        - rdma_cm
+        - ib_uverbs
+
+    - name: Load rshim driver for BF3 management
+      modprobe:
+        name: rshim_pcie
+      ignore_errors: yes
+
+    - name: Enable OVS hardware offload
+      command: ovs-vsctl set Open_vSwitch . other_config:hw-offload=true
+      register: ovs_hw_offload
+
+    - name: Restart OVS to apply offload setting
+      systemd:
+        name: openvswitch-switch
+        state: restarted
+        enabled: yes
+
+    - name: Wait for OVS to restart
+      pause:
+        seconds: 5
+
+    - name: Create OVS bridge for offload
+      command: "ovs-vsctl --may-exist add-br {{ ovs_bridge_name }}"
+
+    - name: Add BF3 physical uplink to bridge
+      command: "ovs-vsctl --may-exist add-port {{ ovs_bridge_name }} {{ uplink_port }}"
+      ignore_errors: yes
+
+    - name: Add host PF representor to bridge
+      command: "ovs-vsctl --may-exist add-port {{ ovs_bridge_name }} {{ host_pf_rep }}"
+      ignore_errors: yes
+
+    - name: Add VF representors to bridge
+      command: "ovs-vsctl --may-exist add-port {{ ovs_bridge_name }} {{ item }}"
+      loop: "{{ vf_reps }}"
+      ignore_errors: yes
+
+    - name: Set MTU for RoCEv2 (jumbo frames)
+      command: "ip link set dev {{ item }} mtu {{ mtu_size }}"
+      loop: "{{ vf_reps + [uplink_port, host_pf_rep] }}"
+      ignore_errors: yes
+
+    - name: Configure RoCEv2 mode on ConnectX-7
+      command: "cma_roce_mode -d mlx5_0 -p 1 -m 2"
+      ignore_errors: yes
+
+    - name: Set DSCP for RoCEv2 TOS marking
+      command: "cma_roce_tos -d mlx5_0 -p 1 -t 106"
+      ignore_errors: yes
+
+    - name: Enable ECN for DCQCN congestion control
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_set: yes
+        reload: yes
+      loop:
+        - { key: "net.ipv4.tcp_ecn", value: "1" }
+        - { key: "net.core.rmem_max", value: "134217728" }
+        - { key: "net.core.wmem_max", value: "134217728" }
+        - { key: "net.ipv4.tcp_rmem", value: "4096 87380 134217728" }
+
+    - name: Verify OVS bridge configuration
+      command: ovs-vsctl show
+      register: ovs_show
+
+    - name: Display OVS bridge state
+      debug:
+        msg: "{{ ovs_show.stdout_lines }}"
+
+    - name: Check offloaded flows (baseline)
+      command: ovs-appctl dpctl/dump-flows type=offloaded
+      register: offloaded_flows
+      ignore_errors: yes
+
+    - name: Display offload status
+      debug:
+        msg: |
+          ================================================
+          DPU Offload Status: {{ inventory_hostname }}
+          ================================================
+          hw-offload: enabled
+          OVS bridge: {{ ovs_bridge_name }}
+          Offloaded flows: {{ offloaded_flows.stdout_lines | length }}
+          RoCEv2: configured (DSCP 26 → TC3)
+          MTU: {{ mtu_size }} (jumbo)
+
+    - name: Write DPU config summary to node
+      copy:
+        content: |
+          # BF3 DPU Offload Config — {{ inventory_hostname }}
+          # Generated: {{ ansible_date_time.date }}
+          bridge: {{ ovs_bridge_name }}
+          uplink: {{ uplink_port }}
+          host_rep: {{ host_pf_rep }}
+          vf_reps: {{ vf_reps | join(', ') }}
+          hw_offload: true
+          roce_mode: 2 (RoCEv2)
+          dscp: {{ roce_dscp }}
+          mtu: {{ mtu_size }}
+        dest: /etc/nvidia-dpu-config.conf

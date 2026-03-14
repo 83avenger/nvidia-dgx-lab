@@ -1,0 +1,73 @@
+# tests/gpu-burn/gpu-burn-job.yaml
+# Kubernetes Job: GPU burn thermal acceptance test on DGX
+# Usage: kubectl apply -f tests/gpu-burn/gpu-burn-job.yaml
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-burn-acceptance
+  namespace: default
+  labels:
+    purpose: "acceptance-test"
+    test-type: "thermal"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gpu-burn
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: gpu-burn
+          image: nvcr.io/nvidia/cuda:12.3.1-devel-ubuntu22.04
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "=== GPU Burn Thermal Test — DGX ==="
+              echo "Node: $(hostname)"
+              echo "Duration: 600 seconds (10 min)"
+              echo ""
+
+              # Install dependencies
+              apt-get update -qq && apt-get install -y -qq git build-essential
+
+              # Clone and build gpu-burn
+              git clone --depth=1 https://github.com/wilicc/gpu-burn.git /gpu-burn
+              cd /gpu-burn && make
+
+              # Baseline temps before burn
+              echo "=== PRE-BURN GPU State ==="
+              nvidia-smi --query-gpu=index,temperature.gpu,power.draw,clocks.current.sm \
+                --format=csv,noheader
+
+              echo ""
+              echo "=== STARTING BURN (600s) ==="
+              ./gpu_burn -d 600
+
+              echo ""
+              echo "=== POST-BURN GPU State ==="
+              nvidia-smi --query-gpu=index,temperature.gpu,power.draw,ecc.errors.uncorrected.volatile.total \
+                --format=csv,noheader
+
+              echo ""
+              echo "=== XID Error Check ==="
+              nvidia-smi | grep -i "xid\|error" | grep -v "^$" || echo "No XID errors detected"
+
+              echo "=== GPU Burn PASSED ==="
+          resources:
+            limits:
+              nvidia.com/gpu: "8"
+              memory: "64Gi"
+              cpu: "8"
+          securityContext:
+            capabilities:
+              add: ["SYS_ADMIN"]

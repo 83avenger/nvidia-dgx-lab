@@ -1,0 +1,98 @@
+# tests/nccl/nccl-allreduce-job.yaml
+# Kubernetes Job to run NCCL AllReduce test on DGX cluster
+# Usage: kubectl apply -f tests/nccl/nccl-allreduce-job.yaml
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nccl-allreduce-test
+  namespace: default
+  labels:
+    purpose: "acceptance-test"
+    test-type: "nccl"
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: nccl-test
+    spec:
+      restartPolicy: Never
+      hostNetwork: true
+      hostIPC: true
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: nccl-test
+          image: nvcr.io/nvidia/pytorch:24.01-py3
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "=== NCCL AllReduce Test — DGX H100 ==="
+              echo "Node: $(hostname)"
+              echo "GPUs: $(nvidia-smi -L | wc -l)"
+              echo ""
+
+              # Build nccl-tests
+              git clone --depth=1 https://github.com/NVIDIA/nccl-tests.git /nccl-tests
+              cd /nccl-tests
+              make MPI=0 CUDA_HOME=/usr/local/cuda -j$(nproc)
+
+              echo ""
+              echo "=== Intra-node AllReduce (8 GPUs, NVLink) ==="
+              ./build/all_reduce_perf \
+                -b 1G -e 8G -f 2 \
+                -g 8 \
+                -n 20 \
+                -c 1
+
+              echo ""
+              echo "=== AllGather (8 GPUs) ==="
+              ./build/all_gather_perf \
+                -b 512M -e 4G -f 2 \
+                -g 8 \
+                -n 20
+
+              echo ""
+              echo "=== ReduceScatter (8 GPUs) ==="
+              ./build/reduce_scatter_perf \
+                -b 512M -e 4G -f 2 \
+                -g 8 \
+                -n 20
+
+              echo ""
+              echo "=== DONE ==="
+          env:
+            - name: NCCL_DEBUG
+              value: "WARN"
+            - name: NCCL_IB_DISABLE
+              value: "0"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "5"
+            - name: NCCL_P2P_LEVEL
+              value: "NVL"
+            - name: NCCL_IB_GID_INDEX
+              value: "3"
+          resources:
+            limits:
+              nvidia.com/gpu: "8"
+              memory: "256Gi"
+              cpu: "32"
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK", "SYS_PTRACE"]
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Gi

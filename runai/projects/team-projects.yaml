@@ -1,0 +1,66 @@
+# runai/projects/team-projects.yaml
+# Run:ai Projects, Departments, and GPU quota configuration
+# Apply: kubectl apply -f runai/projects/team-projects.yaml
+
+---
+# Department: AI Research (umbrella for all teams)
+apiVersion: run.ai/v1
+kind: Department
+metadata:
+  name: ai-research
+  namespace: runai
+spec:
+  resources:
+    gpu:
+      deserved: 48        # 48 out of 64 cluster GPUs reserved for AI Research
+      limit: 64           # Can burst to full cluster
+      overQuotaWeight: 2
+
+---
+# Project: Team NLP (LLM training)
+apiVersion: run.ai/v1
+kind: Project
+metadata:
+  name: team-nlp
+  namespace: runai
+spec:
+  department: ai-research
+  resources:
+    gpu:
+      deserved: 24        # 24 guaranteed GPUs (3× DGX H100 nodes)
+      limit: 48           # Can burst to 48
+      overQuotaWeight: 3  # Higher priority in burst competition
+  nodeAffinity:
+    - key: nvidia.com/gpu.product
+      operator: In
+      values: ["NVIDIA-H100-SXM5-80GB"]
+
+---
+# Project: Team CV (Computer Vision inference)
+apiVersion: run.ai/v1
+kind: Project
+metadata:
+  name: team-cv
+  namespace: runai
+spec:
+  department: ai-research
+  resources:
+    gpu:
+      deserved: 16
+      limit: 32
+      overQuotaWeight: 2
+
+---
+# Project: Team Infra (PSE lab / testing)
+apiVersion: run.ai/v1
+kind: Project
+metadata:
+  name: team-infra
+  namespace: runai
+spec:
+  department: ai-research
+  resources:
+    gpu:
+      deserved: 8
+      limit: 16
+      overQuotaWeight: 1

@@ -1,0 +1,235 @@
+{
+  "air_topology": {
+    "version": "2.0",
+    "name": "DGX-H100-8Node-NDR-Cluster",
+    "description": "8-node DGX H100 cluster with 2-tier InfiniBand NDR fat-tree. Simulates leaf-spine IB fabric, management network, and storage rail. Import at air.ngc.nvidia.com.",
+    "author": "83avenger — NVIDIA PSE Lab",
+    "fabric": "InfiniBand NDR (simulated via Cumulus Linux)",
+
+    "nodes": [
+      {
+        "name": "mgmt-server",
+        "os": "ubuntu-22.04",
+        "cpu": 4,
+        "memory": 8192,
+        "role": "management",
+        "services": ["OpenSM", "UFM", "Ansible", "Prometheus"],
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.1/24", "link": "oob-sw:swp1" }
+        ]
+      },
+      {
+        "name": "dgx-h100-01",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.11/24", "link": "oob-sw:swp2" },
+          { "name": "ib0",  "link": "ib-leaf-1:swp1"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-02",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.12/24", "link": "oob-sw:swp3" },
+          { "name": "ib0",  "link": "ib-leaf-1:swp2"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-03",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.13/24", "link": "oob-sw:swp4" },
+          { "name": "ib0",  "link": "ib-leaf-1:swp3"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-04",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.14/24", "link": "oob-sw:swp5" },
+          { "name": "ib0",  "link": "ib-leaf-2:swp1"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-05",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.15/24", "link": "oob-sw:swp6" },
+          { "name": "ib0",  "link": "ib-leaf-2:swp2"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-06",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.16/24", "link": "oob-sw:swp7" },
+          { "name": "ib0",  "link": "ib-leaf-2:swp3"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-07",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.17/24", "link": "oob-sw:swp8" },
+          { "name": "ib0",  "link": "ib-leaf-3:swp1"  }
+        ]
+      },
+      {
+        "name": "dgx-h100-08",
+        "os": "ubuntu-22.04",
+        "cpu": 16,
+        "memory": 32768,
+        "role": "compute",
+        "gpu_model": "H100_SXM5_80GB",
+        "gpu_count": 8,
+        "nic": "ConnectX-7_NDR400",
+        "interfaces": [
+          { "name": "eth0", "ip": "192.168.100.18/24", "link": "oob-sw:swp9" },
+          { "name": "ib0",  "link": "ib-leaf-3:swp2"  }
+        ]
+      },
+      {
+        "name": "ib-leaf-1",
+        "os": "cumulus-linux-5.x",
+        "cpu": 4,
+        "memory": 4096,
+        "role": "leaf-switch",
+        "model": "QM9700_NDR_simulated",
+        "interfaces": [
+          { "name": "swp1",  "link": "dgx-h100-01:ib0" },
+          { "name": "swp2",  "link": "dgx-h100-02:ib0" },
+          { "name": "swp3",  "link": "dgx-h100-03:ib0" },
+          { "name": "swp49", "link": "ib-spine-1:swp1" },
+          { "name": "swp50", "link": "ib-spine-1:swp2" },
+          { "name": "mgmt",  "ip": "192.168.100.20/24", "link": "oob-sw:swp10" }
+        ]
+      },
+      {
+        "name": "ib-leaf-2",
+        "os": "cumulus-linux-5.x",
+        "cpu": 4,
+        "memory": 4096,
+        "role": "leaf-switch",
+        "model": "QM9700_NDR_simulated",
+        "interfaces": [
+          { "name": "swp1",  "link": "dgx-h100-04:ib0" },
+          { "name": "swp2",  "link": "dgx-h100-05:ib0" },
+          { "name": "swp3",  "link": "dgx-h100-06:ib0" },
+          { "name": "swp49", "link": "ib-spine-1:swp3" },
+          { "name": "swp50", "link": "ib-spine-1:swp4" },
+          { "name": "mgmt",  "ip": "192.168.100.21/24", "link": "oob-sw:swp11" }
+        ]
+      },
+      {
+        "name": "ib-leaf-3",
+        "os": "cumulus-linux-5.x",
+        "cpu": 4,
+        "memory": 4096,
+        "role": "leaf-switch",
+        "model": "QM9700_NDR_simulated",
+        "interfaces": [
+          { "name": "swp1",  "link": "dgx-h100-07:ib0" },
+          { "name": "swp2",  "link": "dgx-h100-08:ib0" },
+          { "name": "swp49", "link": "ib-spine-1:swp5" },
+          { "name": "swp50", "link": "ib-spine-1:swp6" },
+          { "name": "mgmt",  "ip": "192.168.100.22/24", "link": "oob-sw:swp12" }
+        ]
+      },
+      {
+        "name": "ib-spine-1",
+        "os": "cumulus-linux-5.x",
+        "cpu": 4,
+        "memory": 4096,
+        "role": "spine-switch",
+        "model": "QM9700_NDR_simulated",
+        "interfaces": [
+          { "name": "swp1", "link": "ib-leaf-1:swp49" },
+          { "name": "swp2", "link": "ib-leaf-1:swp50" },
+          { "name": "swp3", "link": "ib-leaf-2:swp49" },
+          { "name": "swp4", "link": "ib-leaf-2:swp50" },
+          { "name": "swp5", "link": "ib-leaf-3:swp49" },
+          { "name": "swp6", "link": "ib-leaf-3:swp50" },
+          { "name": "mgmt", "ip": "192.168.100.30/24", "link": "oob-sw:swp13" }
+        ]
+      },
+      {
+        "name": "oob-sw",
+        "os": "cumulus-linux-5.x",
+        "cpu": 2,
+        "memory": 2048,
+        "role": "oob-management-switch",
+        "interfaces": [
+          { "name": "swp1",  "link": "mgmt-server:eth0" },
+          { "name": "swp2",  "link": "dgx-h100-01:eth0" },
+          { "name": "swp3",  "link": "dgx-h100-02:eth0" },
+          { "name": "swp4",  "link": "dgx-h100-03:eth0" },
+          { "name": "swp5",  "link": "dgx-h100-04:eth0" },
+          { "name": "swp6",  "link": "dgx-h100-05:eth0" },
+          { "name": "swp7",  "link": "dgx-h100-06:eth0" },
+          { "name": "swp8",  "link": "dgx-h100-07:eth0" },
+          { "name": "swp9",  "link": "dgx-h100-08:eth0" },
+          { "name": "swp10", "link": "ib-leaf-1:mgmt"   },
+          { "name": "swp11", "link": "ib-leaf-2:mgmt"   },
+          { "name": "swp12", "link": "ib-leaf-3:mgmt"   },
+          { "name": "swp13", "link": "ib-spine-1:mgmt"  }
+        ]
+      }
+    ],
+
+    "networks": {
+      "oob_management": "192.168.100.0/24",
+      "ib_fabric": "192.168.200.0/24",
+      "storage_rail": "192.168.50.0/24"
+    },
+
+    "metadata": {
+      "pse_use_case": "NVIDIA DGX BasePOD presales demo / lab validation",
+      "estimated_spinup_minutes": 5,
+      "total_simulated_gpus": 64,
+      "target_audience": ["G42", "Core42", "Help AG", "Khazna"],
+      "repo": "https://github.com/83avenger/nvidia-dgx-lab"
+    }
+  }
+}

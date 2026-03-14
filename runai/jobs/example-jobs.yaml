@@ -1,0 +1,153 @@
+# runai/jobs/example-jobs.yaml
+# Run:ai job examples for DGX H100 cluster
+# Apply individual sections or use runai submit CLI
+
+---
+# 1. Interactive Jupyter session (not preemptible)
+apiVersion: run.ai/v1
+kind: InteractiveWorkload
+metadata:
+  name: jupyter-nlp
+  namespace: runai-team-nlp
+spec:
+  image: nvcr.io/nvidia/pytorch:24.01-py3
+  gpu: "2"
+  cpu: "16"
+  memory: "128Gi"
+  largeSHM: true
+  ports:
+    - containerPort: 8888
+      serviceType: NodePort
+  command:
+    - jupyter
+    - lab
+    - --ip=0.0.0.0
+    - --no-browser
+    - --allow-root
+  environment:
+    - name: JUPYTER_TOKEN
+      value: "nvidia-lab"
+  volumeMounts:
+    - name: nfs-data
+      mountPath: /data
+  volumes:
+    - name: nfs-data
+      nfs:
+        server: 192.168.50.10
+        path: /exports/datasets
+
+---
+# 2. Distributed PyTorch Training — LLaMA fine-tune (4 nodes × 8 GPUs)
+apiVersion: run.ai/v1
+kind: DistributedWorkload
+metadata:
+  name: llama-finetune
+  namespace: runai-team-nlp
+spec:
+  framework: pytorch
+  workers:
+    count: 4
+    image: nvcr.io/nvidia/pytorch:24.01-py3
+    gpu: "8"
+    cpu: "64"
+    memory: "512Gi"
+    largeSHM: true
+    command:
+      - torchrun
+      - --nproc_per_node=8
+      - --nnodes=4
+      - --rdzv_backend=c10d
+      - --rdzv_endpoint=$(MASTER_ADDR):29500
+      - /workspace/finetune.py
+      - --model=meta-llama/Llama-2-70b-hf
+      - --dataset=/data/custom_dataset
+      - --output=/checkpoints/llama-ft
+    environment:
+      - name: NCCL_IB_DISABLE
+        value: "0"
+      - name: NCCL_NET_GDR_LEVEL
+        value: "5"
+      - name: NCCL_DEBUG
+        value: "WARN"
+    volumeMounts:
+      - name: checkpoints
+        mountPath: /checkpoints
+      - name: datasets
+        mountPath: /data
+  volumes:
+    - name: checkpoints
+      persistentVolumeClaim:
+        claimName: checkpoint-pvc
+    - name: datasets
+      nfs:
+        server: 192.168.50.10
+        path: /exports/datasets
+
+---
+# 3. Batch inference — MIG fractional GPU
+apiVersion: run.ai/v1
+kind: TrainingWorkload
+metadata:
+  name: batch-inference-bert
+  namespace: runai-team-cv
+spec:
+  image: nvcr.io/nvidia/tritonserver:24.01-py3
+  gpu: "0.5"           # Fractional: 50% of one GPU
+  cpu: "4"
+  memory: "32Gi"
+  command:
+    - tritonserver
+    - --model-repository=/models/bert
+    - --http-port=8000
+    - --grpc-port=8001
+  environment:
+    - name: CUDA_VISIBLE_DEVICES
+      value: "0"
+
+---
+# 4. NCCL bandwidth test job (infrastructure validation)
+apiVersion: run.ai/v1
+kind: TrainingWorkload
+metadata:
+  name: nccl-bw-test
+  namespace: runai-team-infra
+spec:
+  image: nvcr.io/nvidia/pytorch:24.01-py3
+  gpu: "8"
+  cpu: "32"
+  memory: "256Gi"
+  largeSHM: true
+  command:
+    - /bin/bash
+    - -c
+    - |
+      git clone https://github.com/NVIDIA/nccl-tests.git /nccl-tests && \
+      cd /nccl-tests && \
+      make MPI=0 CUDA_HOME=/usr/local/cuda && \
+      ./build/all_reduce_perf -b 1G -e 8G -f 2 -g 8 -n 20
+  environment:
+    - name: NCCL_DEBUG
+      value: "INFO"
+    - name: NCCL_NET_GDR_LEVEL
+      value: "5"
+
+---
+# 5. GPU Burn stress test (thermal / stability validation)
+apiVersion: run.ai/v1
+kind: TrainingWorkload
+metadata:
+  name: gpu-burn-stress
+  namespace: runai-team-infra
+spec:
+  image: nvcr.io/nvidia/cuda:12.3.1-devel-ubuntu22.04
+  gpu: "8"
+  cpu: "8"
+  memory: "64Gi"
+  command:
+    - /bin/bash
+    - -c
+    - |
+      apt-get install -y git && \
+      git clone https://github.com/wilicc/gpu-burn.git && \
+      cd gpu-burn && make && \
+      ./gpu_burn -d 300    # Burn all GPUs for 5 minutes

@@ -1,0 +1,108 @@
+# configs/spectrum-x/spectrum4-leaf-nvue.yaml
+# NVIDIA Cumulus NVUE configuration for Spectrum-4 leaf switch (SN5600)
+# Apply with: nv config patch spectrum4-leaf-nvue.yaml && nv config apply
+
+---
+- set:
+    # -----------------------------------------------
+    # Interface: downlinks to DGX nodes (swp1-32)
+    # -----------------------------------------------
+    interface:
+      swp1-32:
+        link:
+          speed: 400G
+          mtu: 9216          # Jumbo frames for RoCEv2
+        type: swp
+
+      # Uplinks to spine (swp49-64)
+      swp49-64:
+        link:
+          speed: 800G
+          mtu: 9216
+        type: swp
+
+      # Management interface
+      mgmt:
+        ip:
+          address:
+            192.168.100.20/24: {}
+        vrf: mgmt
+
+    # -----------------------------------------------
+    # QoS: Lossless RoCEv2 (PFC + ECN)
+    # -----------------------------------------------
+    qos:
+      # PFC: lossless on TC3 (maps from DSCP 26)
+      pfc:
+        0:
+          tx: enable
+          rx: enable
+
+      # DSCP to TC mapping (DSCP 26 → TC3 for RoCEv2)
+      map:
+        dscp-tc:
+          26: 3            # RoCEv2 DSCP 26 → TC3 (lossless)
+          0-25: 0          # Best-effort
+          27-63: 0
+
+      # Egress scheduler
+      egress-scheduler:
+        tc:
+          3:
+            type: strict   # Strict priority for RoCEv2 traffic
+            bw-percent: 0  # Strict = unlimited within priority
+          0:
+            type: dwrr
+            bw-percent: 100
+
+      # ECN marking thresholds (DCQCN)
+      link:
+        pause: disable     # Global pause MUST be disabled for RoCEv2
+
+    # -----------------------------------------------
+    # Adaptive Routing (Spectrum-X feature)
+    # -----------------------------------------------
+    router:
+      adaptive-routing:
+        enable: on
+
+    # Enable AR per interface (downlinks to compute)
+    interface:
+      swp1-32:
+        router:
+          adaptive-routing:
+            enable: on
+
+    # -----------------------------------------------
+    # ECMP / IP routing
+    # -----------------------------------------------
+    router:
+      ecmp:
+        mode: resilient    # Resilient ECMP (avoids rehashing)
+
+    # -----------------------------------------------
+    # BGP Unnumbered (optional — for routed fabric)
+    # -----------------------------------------------
+    # router:
+    #   bgp:
+    #     enable: on
+    #     autonomous-system: 65000
+    #     router-id: 10.0.0.20
+
+    # -----------------------------------------------
+    # Syslog / NTP (management)
+    # -----------------------------------------------
+    service:
+      ntp:
+        mgmt:
+          server:
+            192.168.100.1: {}
+      syslog:
+        mgmt:
+          server:
+            192.168.100.1:
+              port: 514
+
+    system:
+      hostname: spectrum4-leaf-1
+      timezone: Asia/Dubai

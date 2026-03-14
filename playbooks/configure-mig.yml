@@ -1,0 +1,92 @@
+---
+# playbooks/configure-mig.yml
+# Configure MIG profiles across DGX cluster
+# Usage: ansible-playbook configure-mig.yml -i inventory.ini -e mig_profile=3g.20gb
+
+- name: Configure MIG Profiles on DGX Nodes
+  hosts: dgx_nodes
+  become: true
+  serial: 1   # one node at a time to avoid disruption
+
+  vars:
+    mig_profile: "3g.20gb"    # Override with -e mig_profile=1g.10gb
+    gpu_ids: "all"             # "all" or comma-separated: "0,1,2,3"
+
+    mig_profile_ids:
+      "1g.10gb": 19
+      "2g.20gb": 14
+      "3g.20gb": 9
+      "4g.40gb": 5
+      "7g.80gb": 0
+
+  tasks:
+    - name: Get current GPU list
+      command: nvidia-smi -L
+      register: gpu_list
+
+    - name: Display GPUs on node
+      debug:
+        msg: "{{ gpu_list.stdout_lines }}"
+
+    - name: Stop any running GPU workloads (graceful)
+      command: nvidia-smi --kill-active-processes
+      ignore_errors: yes
+
+    - name: Delete existing MIG compute instances
+      command: nvidia-smi mig -dci
+      ignore_errors: yes
+
+    - name: Delete existing MIG GPU instances
+      command: nvidia-smi mig -dgi
+      ignore_errors: yes
+
+    - name: Enable MIG mode
+      command: nvidia-smi -mig 1
+      register: mig_enable_result
+
+    - name: Wait for MIG mode to settle
+      pause:
+        seconds: 5
+
+    - name: Create MIG GPU instances with selected profile
+      command: >
+        nvidia-smi mig -cgi {{ mig_profile_ids[mig_profile] }} -C
+      register: mig_create_result
+
+    - name: Display MIG creation result
+      debug:
+        msg: "{{ mig_create_result.stdout_lines }}"
+
+    - name: List all MIG GPU instances
+      command: nvidia-smi mig -lgi
+      register: mig_gi_list
+
+    - name: List all MIG compute instances
+      command: nvidia-smi mig -lci
+      register: mig_ci_list
+
+    - name: Display MIG summary
+      debug:
+        msg: |
+          ====================================
+          MIG Configuration: {{ inventory_hostname }}
+          Profile: {{ mig_profile }}
+          ====================================
+          GPU Instances:
+          {{ mig_gi_list.stdout }}
+          
+          Compute Instances:
+          {{ mig_ci_list.stdout }}
+
+    - name: Verify Fabric Manager is running (required for MIG)
+      systemd:
+        name: nvidia-fabricmanager
+        state: started
+        enabled: yes
+
+    - name: Tag node with MIG profile label (for Kubernetes)
+      command: >
+        kubectl label node {{ inventory_hostname }}
+        nvidia.com/mig.config={{ mig_profile }}
+        --overwrite
+      ignore_errors: yes

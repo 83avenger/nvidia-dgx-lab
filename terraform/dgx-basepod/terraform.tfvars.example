@@ -1,0 +1,26 @@
+# terraform/dgx-basepod/terraform.tfvars.example
+# Copy to terraform.tfvars and edit for your environment
+# cp terraform.tfvars.example terraform.tfvars
+
+kubeconfig_path     = "~/.kube/config"
+kube_context        = "dgx-basepod"
+gpu_operator_version = "v23.9.0"
+mig_strategy        = "mixed"
+mig_enabled         = "true"
+fabric_type         = "infiniband"
+gpu_product         = "NVIDIA-H100-SXM5-80GB"
+
+dgx_node_names = [
+  "dgx-h100-01",
+  "dgx-h100-02",
+  "dgx-h100-03",
+  "dgx-h100-04",
+  "dgx-h100-05",
+  "dgx-h100-06",
+  "dgx-h100-07",
+  "dgx-h100-08"
+]
+
+nfs_server          = "192.168.50.10"
+nfs_dataset_path    = "/exports/datasets"
+nfs_checkpoint_path = "/exports/checkpoints"

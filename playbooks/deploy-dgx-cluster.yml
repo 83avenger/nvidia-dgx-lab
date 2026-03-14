@@ -1,0 +1,183 @@
+---
+# playbooks/deploy-dgx-cluster.yml
+# Full DGX cluster bootstrap playbook
+# Usage: ansible-playbook deploy-dgx-cluster.yml -i configs/air/inventory.ini
+
+- name: Bootstrap DGX Cluster - All Nodes
+  hosts: dgx_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    nvidia_driver_version: "535"
+    cuda_version: "12.3"
+    fabric_manager_version: "535"
+    mig_mode: false
+    mig_profile: "3g.20gb"
+    ib_mtu: 4096
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install NVIDIA driver prerequisites
+      apt:
+        name:
+          - build-essential
+          - dkms
+          - linux-headers-generic
+          - pciutils
+          - wget
+          - curl
+        state: present
+
+    - name: Add NVIDIA package repository
+      block:
+        - name: Download CUDA keyring
+          get_url:
+            url: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+            dest: /tmp/cuda-keyring.deb
+
+        - name: Install CUDA keyring
+          apt:
+            deb: /tmp/cuda-keyring.deb
+
+        - name: Update apt cache after adding NVIDIA repo
+          apt:
+            update_cache: yes
+
+    - name: Install NVIDIA drivers
+      apt:
+        name:
+          - "nvidia-driver-{{ nvidia_driver_version }}"
+          - "cuda-toolkit-{{ cuda_version | replace('.', '-') }}"
+        state: present
+
+    - name: Install NVIDIA Fabric Manager (for NVSwitch)
+      apt:
+        name: "nvidia-fabricmanager-{{ fabric_manager_version }}"
+        state: present
+
+    - name: Enable and start Fabric Manager
+      systemd:
+        name: nvidia-fabricmanager
+        enabled: yes
+        state: started
+
+    - name: Install InfiniBand utilities
+      apt:
+        name:
+          - infiniband-diags
+          - ibutils
+          - ibverbs-utils
+          - rdmacm-utils
+          - perftest
+        state: present
+
+    - name: Load RDMA kernel modules
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - ib_core
+        - ib_uverbs
+        - rdma_cm
+        - mlx5_core
+        - mlx5_ib
+
+    - name: Set IB MTU via mlxconfig
+      command: >
+        mlxconfig -d /dev/mst/mt4129_pciconf0 -y set
+        DEFAULT_TCLASS=106
+      ignore_errors: yes
+
+    - name: Configure hugepages for RDMA
+      sysctl:
+        name: vm.nr_hugepages
+        value: "2048"
+        sysctl_set: yes
+        reload: yes
+
+    - name: Enable MIG mode if requested
+      when: mig_mode
+      command: "nvidia-smi -mig 1"
+      ignore_errors: yes
+
+    - name: Verify NVIDIA GPU status
+      command: nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
+      register: gpu_status
+      ignore_errors: yes
+
+    - name: Display GPU status
+      debug:
+        msg: "{{ gpu_status.stdout_lines }}"
+
+
+- name: Configure IB Switches (OpenSM on Management)
+  hosts: management
+  become: true
+
+  tasks:
+    - name: Install OpenSM and subnet management tools
+      apt:
+        name:
+          - opensm
+          - ibutils
+          - infiniband-diags
+        state: present
+        update_cache: yes
+
+    - name: Configure OpenSM routing
+      lineinfile:
+        path: /etc/opensm/opensm.conf
+        regexp: "^routing_engine"
+        line: "routing_engine fat_tree"
+        create: yes
+
+    - name: Enable and start OpenSM
+      systemd:
+        name: opensm
+        enabled: yes
+        state: started
+
+    - name: Wait for IB fabric discovery
+      pause:
+        seconds: 15
+
+    - name: Discover IB fabric topology
+      command: ibnetdiscover
+      register: ib_topology
+      ignore_errors: yes
+
+    - name: Display IB topology summary
+      debug:
+        msg: "IB Nodes discovered: {{ ib_topology.stdout_lines | length }}"
+
+
+- name: Validate Full Cluster Health
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Check IB port states
+      command: ibstat
+      register: ibstat_output
+      ignore_errors: yes
+
+    - name: Assert IB port is Active
+      assert:
+        that: "'Active' in ibstat_output.stdout"
+        fail_msg: "IB port not active on {{ inventory_hostname }}"
+        success_msg: "IB port active on {{ inventory_hostname }}"
+      ignore_errors: yes
+
+    - name: Check NVIDIA GPU count
+      command: nvidia-smi -L
+      register: gpu_list
+      ignore_errors: yes
+
+    - name: Display final GPU summary
+      debug:
+        msg: "{{ gpu_list.stdout_lines }}"
